@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <stdint.h>
 
 //testing new convention for static keyword
 #define internal static
@@ -11,44 +12,87 @@ global_persist bool running;
 /****************************/
      /*CLEAN_UP_NEEDED*/
 /****************************/
-global_persist HBITMAP BitMapHandle;
 global_persist void* PointBITMAPMemory;
 global_persist BITMAPINFO BitMapInfo;
-global_persist HDC DeviceContext;
+global_persist int BitMapWidth;
+global_persist int BitMapHeight;
 /*********************************************************************************************************/
 /*********************************************************************************************************/
 
 //function to create a bitmap memory if not initialized and to update the old one with new
 internal void Win32_ResizeDIBSection(int width ,int height)
 {
-	//for now the bitmap memory us deleted first before loading in..MAY CHANGE
-	if (BitMapHandle)
+	if (PointBITMAPMemory)
 	{
-		DeleteObject(BitMapHandle);
+		VirtualFree(PointBITMAPMemory, 0, MEM_RELEASE);
+		//Vitual Protect can be used here to catch any stale pointer to find 'use after free bug' and flag it down
 	}
-	if(!DeviceContext)//initiates a new device context if we have none
-	{
-		DeviceContext = CreateCompatibleDC(0);
-	}
+	BitMapHeight = height;
+	BitMapWidth = width;
 	BitMapInfo.bmiHeader.biSize = sizeof(BitMapInfo.bmiHeader);//gives the size of bmiheader only since it is required to traverse to the palette color
-	BitMapInfo.bmiHeader.biWidth = width;
-	BitMapInfo.bmiHeader.biHeight = height;
+	BitMapInfo.bmiHeader.biWidth = BitMapWidth;
+	BitMapInfo.bmiHeader.biHeight = -BitMapHeight;
+	//negative to symbolize a top down bitmap
 	BitMapInfo.bmiHeader.biPlanes = 1;
-	BitMapInfo.bmiHeader.biBitCount = 32;//asked 32 for DWORD alignment which is due for explanation
+	BitMapInfo.bmiHeader.biBitCount = 32;//asked 32 for DWORD alignment which is due for explanation,4-byte bit alignment
 	BitMapInfo.bmiHeader.biCompression = BI_RGB;
 	BitMapInfo.bmiHeader.biSizeImage = 0;
 	BitMapInfo.bmiHeader.biXPelsPerMeter = 0;
 	BitMapInfo.bmiHeader.biClrUsed = 0;
 	BitMapInfo.bmiHeader.biClrImportant = 0;
-	
-	BitMapHandle = CreateDIBSection(DeviceContext, &BitMapInfo, DIB_RGB_COLORS, &PointBITMAPMemory, 0, 0);
+	//allocating the buffer ourselves
+	int BytePerPixel = 4;
+	int BitMapMemorySizeBytes = 4 * BitMapWidth * BitMapHeight;
+	PointBITMAPMemory = VirtualAlloc(NULL, BitMapMemorySizeBytes, MEM_COMMIT, PAGE_READWRITE);
+	//Two Modes:MEE_COMMIT,MEM_RESERVE commit allocates the memory for current use, 
+	//reserve allocates but doesn't use the memory range
+	//linear rasterization
+	uint8_t* Row = (uint8_t*)PointBITMAPMemory;
+	int Pitch = width * BytePerPixel;
+	for (int Y = 0; Y < BitMapHeight; Y++)
+	{
+
+		uint8_t* Pixel = (uint8_t*)Row;
+		for (int X = 0; X < BitMapWidth; X++) 
+		{
+			/*                 1  2  3  4    [ByteOrder]
+			* Pixel in memory: 00 00 00 00
+			* LITTLE ENDIAN ARCHITECTURE EFFECT
+			* Pixel in memory: BB GG RR xx
+			* 0xxxBBGGRR on 32 bit pixel buffer
+			*/
+
+			/*WELCOME TO 1980*/
+			//blue channel
+			*Pixel = (uint8_t)X;
+			++Pixel;
+
+			//green channel
+			*Pixel = (uint8_t)Y;
+			++Pixel;
+
+			//red channel
+			*Pixel = (uint8_t)X;
+			++Pixel;
+
+			//alignment padding
+			*Pixel = 0;
+			++Pixel;
+		}
+		Row += Pitch;
+	}
 }
 
 // actual Drawing function takes a bitmap
-internal void Win32_UpdateWindows(HDC Context, int X, int Y, int Width, int Height)
+internal void Win32_UpdateWindows(HDC Context, RECT*WindowRECT,int X, int Y, int Width, int Height)
 {
+	int Windowwidth = WindowRECT->right - WindowRECT->left;
+	int WindowHeight = WindowRECT->bottom - WindowRECT->top;
 	// StretchDIBits function copies the color data for a rectangle of pixels in a DIB, JPEG, or PNG image to the specified destination rectangle
-	StretchDIBits(Context, X, Y, Width, Height, X, Y, Width, Height,PointBITMAPMemory, &BitMapInfo, DIB_RGB_COLORS, SRCCOPY);
+	//shouldn't the destinations be the window ..?
+	StretchDIBits(Context, 0, 0, Windowwidth, WindowHeight
+		, 0, 0, BitMapWidth, BitMapHeight
+		,PointBITMAPMemory, &BitMapInfo, DIB_RGB_COLORS, SRCCOPY);
 }
 
 LRESULT CALLBACK WindowProc(
@@ -66,8 +110,8 @@ LRESULT CALLBACK WindowProc(
 		//Gets the Client RECT Area and preps it for drawing from the bitmap
 		RECT ClientRECT;
 		GetClientRect(handle, &ClientRECT);
-		int height = ClientRECT.right - ClientRECT.left;
-		int width = ClientRECT.top - ClientRECT.bottom;
+		int height = ClientRECT.bottom - ClientRECT.top;
+		int width = ClientRECT.right - ClientRECT.left;
 		Win32_ResizeDIBSection(width, height);
 	}break;
 	case WM_PAINT://the "start painting" message
@@ -76,9 +120,11 @@ LRESULT CALLBACK WindowProc(
 		HDC DeviceContext = BeginPaint(handle, &Paint);//notifies the beginning of paint,Also returns a device context(takes a long pointer to PAINTSTRUCT)
 		int X = Paint.rcPaint.left;
 		int Y = Paint.rcPaint.top;
-		int Width = Paint.rcPaint.left - Paint.rcPaint.right;
+		int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 		int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-		Win32_UpdateWindows(DeviceContext ,X , Y, Width, Height);
+		RECT ClientRECT;
+		GetClientRect(handle, &ClientRECT);
+		Win32_UpdateWindows(DeviceContext , &ClientRECT,X , Y, Width, Height);
 		EndPaint(handle, &Paint);//notifies the end of painting
 	}break;
 	//WM_QUIT handles the actual exit conditions
