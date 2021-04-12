@@ -16,8 +16,55 @@ global_persist void* PointBITMAPMemory;
 global_persist BITMAPINFO BitMapInfo;
 global_persist int BitMapWidth;
 global_persist int BitMapHeight;
+global_persist int BytePerPixel = 4;
 /*********************************************************************************************************/
 /*********************************************************************************************************/
+internal void RenderWeirdGradient(int XOffset, int YOffset)
+{
+	int width = BitMapWidth;
+	uint8_t* Row = (uint8_t*)PointBITMAPMemory;
+	int Pitch = width * BytePerPixel;
+	for (int Y = 0; Y < BitMapHeight; Y++)
+	{
+
+		uint32_t* Pixel = (uint32_t*)Row;
+		for (int X = 0; X < BitMapWidth; X++)
+		{
+			/*                 1  2  3  4    [ByteOrder]
+			* Pixel in memory: 00 00 00 00
+			* LITTLE ENDIAN ARCHITECTURE EFFECT
+			* Pixel in memory: BB GG RR xx
+			* 0xxxBBGGRR on 32 bit pixel buffer
+			*/
+
+			/*WELCOME TO 1980
+			//blue channel
+			*Pixel = (uint8_t)(X + XOffset);
+			++Pixel;
+
+			//green channel
+			*Pixel = (uint8_t)(Y+YOffset);
+			++Pixel;
+
+			//red channel
+			*Pixel = 0;
+			++Pixel;
+
+			//alignment padding
+			*Pixel = 0;
+			++Pixel;*/
+
+			/*
+			* MEMORY  : BB GG RR XX
+			* REGISTER: XX RR GG BB
+			*/
+			uint8_t Blue = (X + XOffset);
+			uint8_t Green = (Y + YOffset);
+			*Pixel++ = ((Green << 8) | Blue);
+		}
+		Row += Pitch;
+	}
+}
 
 //function to create a bitmap memory if not initialized and to update the old one with new
 internal void Win32_ResizeDIBSection(int width ,int height)
@@ -41,46 +88,13 @@ internal void Win32_ResizeDIBSection(int width ,int height)
 	BitMapInfo.bmiHeader.biClrUsed = 0;
 	BitMapInfo.bmiHeader.biClrImportant = 0;
 	//allocating the buffer ourselves
-	int BytePerPixel = 4;
 	int BitMapMemorySizeBytes = 4 * BitMapWidth * BitMapHeight;
 	PointBITMAPMemory = VirtualAlloc(NULL, BitMapMemorySizeBytes, MEM_COMMIT, PAGE_READWRITE);
 	//Two Modes:MEE_COMMIT,MEM_RESERVE commit allocates the memory for current use, 
 	//reserve allocates but doesn't use the memory range
 	//linear rasterization
-	uint8_t* Row = (uint8_t*)PointBITMAPMemory;
-	int Pitch = width * BytePerPixel;
-	for (int Y = 0; Y < BitMapHeight; Y++)
-	{
-
-		uint8_t* Pixel = (uint8_t*)Row;
-		for (int X = 0; X < BitMapWidth; X++) 
-		{
-			/*                 1  2  3  4    [ByteOrder]
-			* Pixel in memory: 00 00 00 00
-			* LITTLE ENDIAN ARCHITECTURE EFFECT
-			* Pixel in memory: BB GG RR xx
-			* 0xxxBBGGRR on 32 bit pixel buffer
-			*/
-
-			/*WELCOME TO 1980*/
-			//blue channel
-			*Pixel = (uint8_t)X;
-			++Pixel;
-
-			//green channel
-			*Pixel = (uint8_t)Y;
-			++Pixel;
-
-			//red channel
-			*Pixel = (uint8_t)X;
-			++Pixel;
-
-			//alignment padding
-			*Pixel = 0;
-			++Pixel;
-		}
-		Row += Pitch;
-	}
+	RenderWeirdGradient(120, 0);
+	//may need to clear this to black
 }
 
 // actual Drawing function takes a bitmap
@@ -165,18 +179,31 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 		, 0, Instance, 0); //creating the actual windows..managed through handles
 	if (handle)
 	{
+		int XOffset = 0;
+		int YOffset = 0;
 		running = true;
 		while(running)
 		{
 			MSG message;
-			BOOL MSGResult;//typedef BOOL int
-			MSGResult = GetMessage(&message, 0, 0, 0);//pulling message
-			TranslateMessage(&message);//key bind translation
-			DispatchMessageA(&message);//message dispatch
-			if (MSGResult == -1) //error check
+			while (PeekMessage(&message, 0, 0, 0, PM_REMOVE))//while to flush the message queue
 			{
-				return -1;
+				if (message.message == WM_QUIT)
+				{
+					running = false;
+				}
+				TranslateMessage(&message);//key bind translation
+				DispatchMessageA(&message);//message dispatch
 			}
+			RenderWeirdGradient(XOffset, YOffset);
+			HDC Context = GetDC(handle);
+			RECT ClientRECT;
+			GetClientRect(handle, &ClientRECT);
+			int WindowHeight = ClientRECT.bottom - ClientRECT.top;
+			int WindowWidth = ClientRECT.right - ClientRECT.left;
+			Win32_UpdateWindows(Context, &ClientRECT, 0, 0, WindowWidth, WindowHeight);
+			ReleaseDC(handle, Context);
+			++XOffset;
+			++YOffset;
 		}
 	}
 	else
