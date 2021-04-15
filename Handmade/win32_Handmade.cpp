@@ -1,5 +1,6 @@
 #include <Windows.h>
 #include <stdint.h>
+#include <Xinput.h>
 
 //testing new convention for static keyword
 #define internal static
@@ -12,23 +13,91 @@ global_persist bool running;
 /****************************/
      /*CLEAN_UP_NEEDED*/
 /****************************/
-global_persist void* PointBITMAPMemory;
-global_persist BITMAPINFO BitMapInfo;
-global_persist int BitMapWidth;
-global_persist int BitMapHeight;
-global_persist int BytePerPixel = 4;
-/*********************************************************************************************************/
-/*********************************************************************************************************/
-internal void RenderWeirdGradient(int XOffset, int YOffset)
+
+/*STRUCTURES*/
+struct WindowDimension
 {
-	int width = BitMapWidth;
-	uint8_t* Row = (uint8_t*)PointBITMAPMemory;
-	int Pitch = width * BytePerPixel;
-	for (int Y = 0; Y < BitMapHeight; Y++)
+	int Width;
+	int Height;
+};
+struct Win32_OffScreenBuffer
+{
+	void* PointBITMAPMemory;
+	BITMAPINFO BitMapInfo;
+	int BitMapWidth;
+	int BitMapHeight;
+	int BytePerPixel;
+	int Pitch;
+};
+global_persist struct Win32_OffScreenBuffer BackBuffer;
+
+/*********************************************************************************************************/
+/*********************************************************************************************************/
+/*DYNAMICALLY LOADING FUNCTION FROM A LIBARY MANUALLY*/
+/*XINPUTGETSTATE SUPPORT*/
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)//defined a macro for the creation of stub function
+/*The Function definition is pulled from the header and is defined to create a function pointer that would dynamically link with
+   either the manually loaded windows function or the stub*/
+
+typedef X_INPUT_GET_STATE(X_Input_Get_State);//creating the replacement definition
+
+X_INPUT_GET_STATE(XInputGetStateStub)//stub function
+{
+	return 0;
+};
+/*The stub function is created to avoid crashes when the program fails to load the intended function the stub essential acts
+  as a fake funtion that replace and should be designed with the conditional that the funtion is affecting into mind*/
+
+global_persist X_Input_Get_State* XInputGetState_ = XInputGetStateStub;//creating a function pointer that points to the function that dynamically loads
+
+
+#define XInputGetState XInputGetState_;//saftey mechanics
+/*created to protect other programmer that may collaberate from accidently calling the orginal function by replacing 
+  the function name of orginal windows with the macro */
+
+
+/*XINPUTGETSTATE SUPPORT*/
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)
+
+typedef X_INPUT_SET_STATE(X_Input_Set_State);
+
+X_INPUT_SET_STATE(XInputSetStateStub)
+{
+	return 0;
+};
+
+global_persist X_Input_Set_State* XInputSetState_ = XInputSetStateStub;
+
+#define XInputSetState XInputSetState_;
+
+/*internal void LoadXLibary()
+{
+	HMODULE XInputLibary = LoadLibraryA("xinput1_3.dll");
+	if (XInputLibary)
+	{
+		XInputGetState = GetProcAddress(XInputLibary,"XInputGetState");
+		XInputSetState = GetProcAddress(XInputLibary,"XInputSetState");
+	}
+}*/
+
+internal WindowDimension Win32GetWindowDimension(HWND handle)
+{
+	WindowDimension Result;
+	RECT ClientRECT;
+	GetClientRect(handle, &ClientRECT);
+	Result.Height = ClientRECT.bottom - ClientRECT.top;
+	Result.Width = ClientRECT.right - ClientRECT.left;
+	return Result;
+}
+internal void RenderWeirdGradient( Win32_OffScreenBuffer Buffer ,int XOffset, int YOffset)
+{
+	//may need to clear this to black
+	uint8_t* Row = (uint8_t*)Buffer.PointBITMAPMemory;
+	for (int Y = 0; Y < Buffer.BitMapHeight; Y++)
 	{
 
 		uint32_t* Pixel = (uint32_t*)Row;
-		for (int X = 0; X < BitMapWidth; X++)
+		for (int X = 0; X < Buffer.BitMapWidth; X++)
 		{
 			/*                 1  2  3  4    [ByteOrder]
 			* Pixel in memory: 00 00 00 00
@@ -60,53 +129,52 @@ internal void RenderWeirdGradient(int XOffset, int YOffset)
 			*/
 			uint8_t Blue = (X + XOffset);
 			uint8_t Green = (Y + YOffset);
-			*Pixel++ = ((Green << 8) | Blue);
+			uint8_t Red = (X - YOffset);
+			*Pixel++ = ((Red<<16)|(Green << 8) | Blue);
 		}
-		Row += Pitch;
+		Row += Buffer.Pitch;
 	}
 }
 
 //function to create a bitmap memory if not initialized and to update the old one with new
-internal void Win32_ResizeDIBSection(int width ,int height)
+internal void Win32_ResizeDIBSection(Win32_OffScreenBuffer *Buffer ,int width ,int height)
 {
-	if (PointBITMAPMemory)
+	if (Buffer->PointBITMAPMemory)
 	{
-		VirtualFree(PointBITMAPMemory, 0, MEM_RELEASE);
+		VirtualFree(Buffer->PointBITMAPMemory, 0, MEM_RELEASE);
 		//Vitual Protect can be used here to catch any stale pointer to find 'use after free bug' and flag it down
 	}
-	BitMapHeight = height;
-	BitMapWidth = width;
-	BitMapInfo.bmiHeader.biSize = sizeof(BitMapInfo.bmiHeader);//gives the size of bmiheader only since it is required to traverse to the palette color
-	BitMapInfo.bmiHeader.biWidth = BitMapWidth;
-	BitMapInfo.bmiHeader.biHeight = -BitMapHeight;
+	Buffer->BytePerPixel = 4;
+	Buffer->BitMapHeight = height;
+	Buffer->BitMapWidth = width;
+	Buffer->BitMapInfo.bmiHeader.biSize = sizeof(Buffer->BitMapInfo.bmiHeader);//gives the size of bmiheader only since it is required to traverse to the palette color
+	Buffer->BitMapInfo.bmiHeader.biWidth = Buffer->BitMapWidth;
+	Buffer->BitMapInfo.bmiHeader.biHeight = -Buffer->BitMapHeight;
 	//negative to symbolize a top down bitmap
-	BitMapInfo.bmiHeader.biPlanes = 1;
-	BitMapInfo.bmiHeader.biBitCount = 32;//asked 32 for DWORD alignment which is due for explanation,4-byte bit alignment
-	BitMapInfo.bmiHeader.biCompression = BI_RGB;
-	BitMapInfo.bmiHeader.biSizeImage = 0;
-	BitMapInfo.bmiHeader.biXPelsPerMeter = 0;
-	BitMapInfo.bmiHeader.biClrUsed = 0;
-	BitMapInfo.bmiHeader.biClrImportant = 0;
+	Buffer->BitMapInfo.bmiHeader.biPlanes = 1;
+	Buffer->BitMapInfo.bmiHeader.biBitCount = 32;//asked 32 for DWORD alignment which is due for explanation,4-byte bit alignment
+	Buffer->BitMapInfo.bmiHeader.biCompression = BI_RGB;
+	Buffer->BitMapInfo.bmiHeader.biSizeImage = 0;
+	Buffer->BitMapInfo.bmiHeader.biXPelsPerMeter = 0;
+	Buffer->BitMapInfo.bmiHeader.biClrUsed = 0;
+	Buffer->BitMapInfo.bmiHeader.biClrImportant = 0;
 	//allocating the buffer ourselves
-	int BitMapMemorySizeBytes = 4 * BitMapWidth * BitMapHeight;
-	PointBITMAPMemory = VirtualAlloc(NULL, BitMapMemorySizeBytes, MEM_COMMIT, PAGE_READWRITE);
+	int BitMapMemorySizeBytes = 4 * Buffer->BitMapWidth * Buffer->BitMapHeight;
+	Buffer->PointBITMAPMemory = VirtualAlloc(NULL, BitMapMemorySizeBytes, MEM_COMMIT, PAGE_READWRITE);
+	Buffer->Pitch = width * Buffer->BytePerPixel;
 	//Two Modes:MEE_COMMIT,MEM_RESERVE commit allocates the memory for current use, 
 	//reserve allocates but doesn't use the memory range
-	//linear rasterization
-	RenderWeirdGradient(120, 0);
-	//may need to clear this to black
+	//RenderWeirdGradient(120, 0);
 }
 
 // actual Drawing function takes a bitmap
-internal void Win32_UpdateWindows(HDC Context, RECT*WindowRECT,int X, int Y, int Width, int Height)
+internal void Win32_UpdateWindows(HDC Context, Win32_OffScreenBuffer Buffer,int X, int Y, int Width, int Height)
 {
-	int Windowwidth = WindowRECT->right - WindowRECT->left;
-	int WindowHeight = WindowRECT->bottom - WindowRECT->top;
 	// StretchDIBits function copies the color data for a rectangle of pixels in a DIB, JPEG, or PNG image to the specified destination rectangle
 	//shouldn't the destinations be the window ..?
-	StretchDIBits(Context, 0, 0, Windowwidth, WindowHeight
-		, 0, 0, BitMapWidth, BitMapHeight
-		,PointBITMAPMemory, &BitMapInfo, DIB_RGB_COLORS, SRCCOPY);
+	StretchDIBits(Context, 0, 0, Width, Height
+		, 0, 0, Buffer.BitMapWidth, Buffer.BitMapHeight
+		, Buffer.PointBITMAPMemory, &Buffer.BitMapInfo, DIB_RGB_COLORS, SRCCOPY);
 }
 
 LRESULT CALLBACK WindowProc(
@@ -119,15 +187,6 @@ LRESULT CALLBACK WindowProc(
 	LRESULT Result = 0;
 	switch (Message)
 	{
-	case WM_SIZE:
-	{
-		//Gets the Client RECT Area and preps it for drawing from the bitmap
-		RECT ClientRECT;
-		GetClientRect(handle, &ClientRECT);
-		int height = ClientRECT.bottom - ClientRECT.top;
-		int width = ClientRECT.right - ClientRECT.left;
-		Win32_ResizeDIBSection(width, height);
-	}break;
 	case WM_PAINT://the "start painting" message
 	{
 		PAINTSTRUCT Paint;//paint struct that gets set by windows to get useful data back
@@ -136,10 +195,68 @@ LRESULT CALLBACK WindowProc(
 		int Y = Paint.rcPaint.top;
 		int Width = Paint.rcPaint.right - Paint.rcPaint.left;
 		int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-		RECT ClientRECT;
-		GetClientRect(handle, &ClientRECT);
-		Win32_UpdateWindows(DeviceContext , &ClientRECT,X , Y, Width, Height);
+		WindowDimension Dimension = Win32GetWindowDimension(handle);
+		Win32_UpdateWindows(DeviceContext ,BackBuffer,X , Y, Width, Height);
 		EndPaint(handle, &Paint);//notifies the end of painting
+	}break;
+	case WM_SYSKEYDOWN:
+	case WM_SYSKEYUP:
+	case WM_KEYDOWN:
+	case WM_KEYUP:
+	{
+		uint32_t VK_Code = wParam;
+		bool WasDown = ((lParam & (1 << 30)) != 0);
+		bool IsDown =((lParam & (1 << 31)) == 0);
+		if (WasDown != IsDown)
+		{
+			if (VK_Code == 'W')
+			{
+
+			}
+			if (VK_Code == 'A')
+			{
+
+			}
+			if (VK_Code == 'S')
+			{
+
+			}
+			if (VK_Code == 'D')
+			{
+
+			}
+			if (VK_Code == VK_ESCAPE)
+			{
+				if (IsDown)
+				{
+					OutputDebugStringA("down \n");
+				}
+				if (WasDown)
+				{
+					OutputDebugStringA("up \n");
+				}
+			}
+			if (VK_Code == VK_SPACE)
+			{
+
+			}
+			if (VK_Code == VK_UP)
+			{
+
+			}
+			if (VK_Code == VK_DOWN)
+			{
+
+			}
+			if (VK_Code == VK_LEFT)
+			{
+
+			}
+			if (VK_Code == VK_RIGHT)
+			{
+
+			}
+		}
 	}break;
 	//WM_QUIT handles the actual exit conditions
 	case WM_QUIT:
@@ -163,6 +280,9 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 {
 	//UINT windows define : typedef unsigned int UINT
 	WNDCLASS wc = {}; //{} equals zero
+	//the noise on this call...why..?
+	//[THOUGHTS]:the noise goes away as soon as the window is larger than 1280X720..so maybe compression fault..?
+	Win32_ResizeDIBSection(&BackBuffer, 1280, 720);
 	wc.style = CS_OWNDC|CS_HREDRAW;//CS_OWNDC creates a device context for every window generated
 	wc.lpfnWndProc =WindowProc ; //windows message procedure , normally uses DefWndProcc
 	wc.hInstance = Instance; //current instance of the window
@@ -194,13 +314,41 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 				TranslateMessage(&message);//key bind translation
 				DispatchMessageA(&message);//message dispatch
 			}
-			RenderWeirdGradient(XOffset, YOffset);
+			/*DWORD dwResult;
+			for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ControllerIndex++)
+			{
+				XINPUT_STATE ControllerState;
+				if (XInputGetState(ControllerIndex, &ControllerState) == ERROR_SUCCESS)
+				{
+					//controller is plugged
+					//check if the polling rate is too high
+					XINPUT_GAMEPAD* Pad = &ControllerState.Gamepad;
+
+					bool Up = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+					bool Down = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+					bool Left = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+					bool Right = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+					bool Start = (Pad->wButtons & XINPUT_GAMEPAD_START);
+					bool Back = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+					bool RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+					bool LeftShoulder = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+					bool AButton = (Pad->wButtons & XINPUT_GAMEPAD_A);
+					bool BButton = (Pad->wButtons & XINPUT_GAMEPAD_B);
+					bool XButton = (Pad->wButtons & XINPUT_GAMEPAD_X);
+					bool YButton = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+
+					int16_t StickX = Pad->sThumbLX;
+					int16_t StickY = Pad->sThumbLY;
+				}
+				else
+				{
+					//controller is unavailable
+				}
+			}*/
+			RenderWeirdGradient(BackBuffer,XOffset, YOffset);
 			HDC Context = GetDC(handle);
-			RECT ClientRECT;
-			GetClientRect(handle, &ClientRECT);
-			int WindowHeight = ClientRECT.bottom - ClientRECT.top;
-			int WindowWidth = ClientRECT.right - ClientRECT.left;
-			Win32_UpdateWindows(Context, &ClientRECT, 0, 0, WindowWidth, WindowHeight);
+			WindowDimension Dimension = Win32GetWindowDimension(handle);
+			Win32_UpdateWindows(Context,BackBuffer,0, 0, Dimension.Width, Dimension.Height);
 			ReleaseDC(handle, Context);
 			++XOffset;
 			++YOffset;
