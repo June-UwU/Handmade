@@ -1,11 +1,13 @@
 #include <Windows.h>
 #include <stdint.h>
 #include <Xinput.h>
+#include <Dsound.h>
 
 //testing new convention for static keyword
 #define internal static
 #define local_persist static
 #define global_persist static
+#define bool32 int32_t
 /*********************************************************************************************************/
                                           /*GLOBAL_VARIABLES*/
 /*********************************************************************************************************/
@@ -33,6 +35,9 @@ global_persist struct Win32_OffScreenBuffer BackBuffer;
 
 /*********************************************************************************************************/
 /*********************************************************************************************************/
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND* ppDS, LPUNKNOWN pUnkOuter)
+
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
 /*DYNAMICALLY LOADING FUNCTION FROM A LIBARY MANUALLY*/
 /*XINPUTGETSTATE SUPPORT*/
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)//defined a macro for the creation of stub function
@@ -43,12 +48,12 @@ typedef X_INPUT_GET_STATE(X_Input_Get_State);//creating the replacement definiti
 
 X_INPUT_GET_STATE(XInputGetStateStub)//stub function
 {
-	return 0;
+	return ERROR_DEVICE_NOT_CONNECTED;
 };
 /*The stub function is created to avoid crashes when the program fails to load the intended function the stub essential acts
   as a fake funtion that replace and should be designed with the conditional that the funtion is affecting into mind*/
 
-global_persist X_Input_Get_State* XInputGetState_ = XInputGetStateStub;//creating a function pointer that points to the function that dynamically loads
+global_persist X_Input_Get_State *XInputGetState_ = XInputGetStateStub;//creating a function pointer that points to the function that dynamically loads
 
 
 #define XInputGetState XInputGetState_;//saftey mechanics
@@ -56,29 +61,107 @@ global_persist X_Input_Get_State* XInputGetState_ = XInputGetStateStub;//creatin
   the function name of orginal windows with the macro */
 
 
-/*XINPUTGETSTATE SUPPORT*/
+internal void Win32_InitSound(HWND handle, int32_t SamplesPerSec, int32_t BufferSize)
+{
+	//Loading sound libary
+	HMODULE SoundLib = LoadLibraryA("dsound.dll");
+	if (SoundLib)
+	{
+		//Creating the required function pointer.. and assigning the pointer
+		direct_sound_create* DirectSoundCreate = (direct_sound_create*)GetProcAddress(SoundLib, "DirectSoundCreate");
+		//direct sound
+		LPDIRECTSOUND DirectSound;
+		if (DirectSoundCreate && DirectSoundCreate(0, &DirectSound, 0))
+		{
+			WAVEFORMATEX WaveFormat = {};
+
+			WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
+			WaveFormat.nChannels = 2;
+			WaveFormat.nSamplesPerSec = SamplesPerSec;
+			WaveFormat.wBitsPerSample = 16;
+			WaveFormat.nBlockAlign = (WaveFormat.nChannels * WaveFormat.wBitsPerSample) / 8;
+			WaveFormat.nAvgBytesPerSec = WaveFormat.nSamplesPerSec * WaveFormat.nBlockAlign;
+			WaveFormat.cbSize = 0;
+
+			//SetCooperativeLevel set how device instances interact with each other
+			if (DirectSound->SetCooperativeLevel(handle, DSSCL_PRIORITY))
+			{
+				LPDSBUFFERDESC BufferDescription = {};
+				BufferDescription->dwSize = sizeof(BufferDescription);
+				BufferDescription->dwFlags = DSBCAPS_PRIMARYBUFFER;
+				BufferDescription->dwBufferBytes = BufferSize;
+
+
+				LPDIRECTSOUNDBUFFER PrimaryBuffer;
+				//primary biffer allocation
+				if (SUCCEEDED(DirectSound->CreateSoundBuffer(BufferDescription, &PrimaryBuffer, 0)))
+				{
+					//sets the format for primary buffer
+					if (SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
+					{
+
+					}
+					else
+					{
+
+					}
+				}
+				else
+				{
+
+				}
+			}
+			else
+			{
+				//logging
+			}
+			LPDSBUFFERDESC SecondaryBufferDescription = {};
+			SecondaryBufferDescription->dwSize = sizeof(SecondaryBufferDescription);
+			SecondaryBufferDescription->dwFlags = 0;
+			SecondaryBufferDescription->dwBufferBytes = BufferSize;
+			SecondaryBufferDescription->lpwfxFormat = &WaveFormat;
+
+			LPDIRECTSOUNDBUFFER SecondaryBuffer;
+			if (SUCCEEDED(DirectSound->CreateSoundBuffer(SecondaryBufferDescription, &SecondaryBuffer, 0)))
+			{
+
+			}
+
+		}
+		else
+		{
+			//logging
+		}
+	}
+}
+
+/*XINPUTSETSTATE SUPPORT*/
 #define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE* pState)
 
 typedef X_INPUT_SET_STATE(X_Input_Set_State);
 
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-	return 0;
+	return ERROR_DEVICE_NOT_CONNECTED;
 };
 
-global_persist X_Input_Set_State* XInputSetState_ = XInputSetStateStub;
+global_persist X_Input_Set_State *XInputSetState_ = XInputSetStateStub;
 
 #define XInputSetState XInputSetState_;
 
-/*internal void LoadXLibary()
+internal void LoadXLibary()
 {
-	HMODULE XInputLibary = LoadLibraryA("xinput1_3.dll");
+	HMODULE XInputLibary = LoadLibraryA("xinput1_4.dll");
+	if (!XInputLibary)
+	{
+		XInputLibary = LoadLibraryA("xinput1_3.dll");
+	}
 	if (XInputLibary)
 	{
-		XInputGetState = GetProcAddress(XInputLibary,"XInputGetState");
-		XInputSetState = GetProcAddress(XInputLibary,"XInputSetState");
+		XInputGetState_ = (X_Input_Get_State *)( GetProcAddress(XInputLibary,"XInputGetState"));
+		XInputSetState_ = (X_Input_Set_State *)( GetProcAddress(XInputLibary,"XInputSetState"));
 	}
-}*/
+}
 
 internal WindowDimension Win32GetWindowDimension(HWND handle)
 {
@@ -301,6 +384,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 	{
 		int XOffset = 0;
 		int YOffset = 0;
+		Win32_InitSound(handle ,48000 , 48000*2*sizeof(int16_t));
 		running = true;
 		while(running)
 		{
@@ -314,7 +398,8 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 				TranslateMessage(&message);//key bind translation
 				DispatchMessageA(&message);//message dispatch
 			}
-			/*DWORD dwResult;
+
+
 			for (DWORD ControllerIndex = 0; ControllerIndex < XUSER_MAX_COUNT; ControllerIndex++)
 			{
 				XINPUT_STATE ControllerState;
@@ -344,7 +429,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 				{
 					//controller is unavailable
 				}
-			}*/
+			}
 			RenderWeirdGradient(BackBuffer,XOffset, YOffset);
 			HDC Context = GetDC(handle);
 			WindowDimension Dimension = Win32GetWindowDimension(handle);
