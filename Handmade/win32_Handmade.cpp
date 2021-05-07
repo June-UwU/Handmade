@@ -15,6 +15,7 @@
 global_persist bool running;
 /****************************/
      /*CLEAN_UP_NEEDED*/
+//global_persist bool Latencytest = false;
 global_persist LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 #define Pi32 3.141592653589793238462643
 /****************************/
@@ -31,6 +32,7 @@ struct Win32_SoundProperty
 	int32_t WavePeriod;
 	int32_t HalfWavePeriod;
 	uint32_t RunningSampleIndex;
+	int32_t Latency;
 };
 
 struct WindowDimension
@@ -55,6 +57,7 @@ global_persist struct Win32_OffScreenBuffer BackBuffer;
 internal void Win32_PlayBuffer(Win32_SoundProperty* SoundOutput, DWORD PlayCursor)
 {
 
+	PlayCursor = (PlayCursor + (SoundOutput->Latency * SoundOutput->BytesPerSample))%SoundOutput->SampleBufferSize;
 	DWORD LockOffSet = (SoundOutput->RunningSampleIndex * SoundOutput->BytesPerSample) % SoundOutput->SampleBufferSize;
 	void* Region1;
 	DWORD Region1Size;
@@ -352,6 +355,7 @@ LRESULT CALLBACK WindowProc(
 	case WM_KEYDOWN:
 	case WM_KEYUP:
 	{
+		//Latencytest = true;
 		uint32_t VK_Code = wParam;
 		bool WasDown = ((lParam & (1 << 30)) != 0);
 		bool IsDown =((lParam & (1 << 31)) == 0);
@@ -386,7 +390,6 @@ LRESULT CALLBACK WindowProc(
 			}
 			if (VK_Code == VK_SPACE)
 			{
-
 			}
 			if (VK_Code == VK_UP)
 			{
@@ -439,7 +442,10 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 	//wc.hbrBackground = ; not setting background
 	//wc.lpszMenuName = ; no classic window menu
 	wc.lpszClassName = L"HandmadeWindowClass";// window class name to identify the class and create the window using the class we created
-
+	LARGE_INTEGER LastTime;
+	QueryPerformanceCounter(&LastTime);
+	LARGE_INTEGER CounterFrequency;
+	QueryPerformanceFrequency(&CounterFrequency);
 
 	RegisterClass(&wc);//registering the window class
 
@@ -454,15 +460,17 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 		SoundOutput.BytesPerSample = 4;
 		SoundOutput.SampleBufferSize = SoundOutput.BytesPerSample * SoundOutput.SamplePerSecond;
 		SoundOutput.ToneHz = 256;
-		SoundOutput.ToneVolume = 3000;
+		SoundOutput.ToneVolume = 5000;
 		SoundOutput.WavePeriod = SoundOutput.SamplePerSecond/ SoundOutput.ToneHz;
 		SoundOutput.HalfWavePeriod = SoundOutput.WavePeriod / 2;
 		SoundOutput.RunningSampleIndex = 0;
+		SoundOutput.Latency = SoundOutput.SamplePerSecond / 15;
 		Win32_InitSound(handle , SoundOutput.SamplePerSecond, SoundOutput.SamplePerSecond * SoundOutput.BytesPerSample);
 
 		GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
 
 		running = true;
+		uint64_t LastRDTSC = __rdtsc();
 		while(running)
 		{
 			MSG message;
@@ -511,56 +519,14 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 
 			DWORD PlayCursor;
 			DWORD WriteCursor;
-
+		
 			if (SUCCEEDED(GlobalSecondaryBuffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
 			{
-
+				
 				Win32_PlayBuffer(&SoundOutput, PlayCursor);
-				/*DWORD LockOffSet = (SoundOutput.RunningSampleIndex * SoundOutput.BytesPerSample) % SoundOutput.SampleBufferSize;
-				void* Region1;
-				DWORD Region1Size;
-				void* Region2;
-				DWORD Region2Size;
-				DWORD BytesToLock = 0;	
-
-				if (PlayCursor == LockOffSet)
-				{
-					//BytesToLock = SampleBufferSize;
-				}
-				else if (PlayCursor < LockOffSet)
-				{
-					BytesToLock = SoundOutput.SampleBufferSize - LockOffSet + PlayCursor;
-				}
-				else
-				{
-					BytesToLock = PlayCursor - LockOffSet;
-				}
-
-				if (SUCCEEDED(GlobalSecondaryBuffer->Lock(LockOffSet, BytesToLock, &Region1, &Region1Size, &Region2, &Region2Size, 0)))
-				{
-					int16_t* SampleOut = (int16_t *)Region1;
-					for (int i = 0; i < Region1Size / SoundOutput.BytesPerSample; i++) {
-						float t = 2.0f*Pi32*(((float)SoundOutput.RunningSampleIndex / (float)SoundOutput.WavePeriod));
-						float SineValue = sinf(t);
-						int16_t Value = int16_t(SineValue * SoundOutput.ToneVolume);
-						*SampleOut++ = Value;
-						*SampleOut++ = Value;
-						++SoundOutput.RunningSampleIndex;
-					}
-					SampleOut = (int16_t*)Region2;
-					for (int i = 0; i < Region2Size / SoundOutput.BytesPerSample; i++) {
-						float t = 2.0f * Pi32 * (((float)SoundOutput.RunningSampleIndex / (float)SoundOutput.WavePeriod));
-						float SineValue = sinf(t);
-						int16_t Value = int16_t(SineValue * SoundOutput.ToneVolume);
-						*SampleOut++ = Value;
-						*SampleOut++ = Value;
-						++SoundOutput.RunningSampleIndex;
-					}
-
-					GlobalSecondaryBuffer->Unlock(Region1, Region1Size, Region2, Region2Size);
-
-				}*/
+				
 			}
+
 
 
 			HDC Context = GetDC(handle);
@@ -569,6 +535,25 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 			ReleaseDC(handle, Context);
 			++XOffset;
 			++YOffset;
+			LARGE_INTEGER EndTime;
+			QueryPerformanceCounter(&EndTime);
+			uint64_t EndRDTSC = __rdtsc();
+			int32_t TimeElapsed = EndTime.QuadPart - LastTime.QuadPart;
+
+
+			int32_t FPS = CounterFrequency.QuadPart / TimeElapsed;
+			int32_t MSPerFrame = 1000 * TimeElapsed / CounterFrequency.QuadPart;
+			int32_t RDTSC = (EndRDTSC - LastRDTSC)/(1000 * 1000);
+
+
+			char OutputString[256]{};
+			//the fck..?no array decay..?
+			//used wide string...poggers
+			//done with micro counter ....investigate the inconsistent delay...
+			wsprintfA(OutputString,"FPS : %d MSPerFrame : %d RDTSC : %d\n", FPS , MSPerFrame ,RDTSC);
+			OutputDebugStringA(OutputString);
+			LastTime = EndTime;
+			LastRDTSC = EndRDTSC;
 		}
 	}
 	else
