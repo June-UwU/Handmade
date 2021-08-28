@@ -1,14 +1,11 @@
+#include "Handmade.h"
+
 #include <Windows.h>
 #include <stdint.h>
 #include <Xinput.h>
 #include <Dsound.h>
 #include <math.h>
-
-// testing new convention for static keyword
-#define internal	   static
-#define local_persist  static
-#define global_persist static
-#define bool32		   int32_t
+#include "Defines.h"
 /*********************************************************************************************************/
 /*GLOBAL_VARIABLES*/
 /*********************************************************************************************************/
@@ -40,16 +37,7 @@ struct WindowDimension
 	int Width;
 	int Height;
 };
-struct Win32_OffScreenBuffer
-{
-	void*	   PointBITMAPMemory;
-	BITMAPINFO BitMapInfo;
-	int		   BitMapWidth;
-	int		   BitMapHeight;
-	int		   BytePerPixel;
-	int		   Pitch;
-};
-global_persist struct Win32_OffScreenBuffer BackBuffer;
+
 
 /*********************************************************************************************************/
 /*********************************************************************************************************/
@@ -236,51 +224,7 @@ internal WindowDimension Win32GetWindowDimension(HWND handle)
 	Result.Width  = ClientRECT.right - ClientRECT.left;
 	return Result;
 }
-internal void RenderWeirdGradient(Win32_OffScreenBuffer Buffer, int XOffset, int YOffset)
-{
-	// may need to clear this to black
-	uint8_t* Row = (uint8_t*)Buffer.PointBITMAPMemory;
-	for (int Y = 0; Y < Buffer.BitMapHeight; Y++)
-	{
-		uint32_t* Pixel = (uint32_t*)Row;
-		for (int X = 0; X < Buffer.BitMapWidth; X++)
-		{
-			/*                 1  2  3  4    [ByteOrder]
-			 * Pixel in memory: 00 00 00 00
-			 * LITTLE ENDIAN ARCHITECTURE EFFECT
-			 * Pixel in memory: BB GG RR xx
-			 * 0xxxBBGGRR on 32 bit pixel buffer
-			 */
 
-			/*WELCOME TO 1980
-			//blue channel
-			*Pixel = (uint8_t)(X + XOffset);
-			++Pixel;
-
-			//green channel
-			*Pixel = (uint8_t)(Y+YOffset);
-			++Pixel;
-
-			//red channel
-			*Pixel = 0;
-			++Pixel;
-
-			//alignment padding
-			*Pixel = 0;
-			++Pixel;*/
-
-			/*
-			 * MEMORY  : BB GG RR XX
-			 * REGISTER: XX RR GG BB
-			 */
-			uint8_t Blue  = (X + XOffset);
-			uint8_t Green = (Y + YOffset);
-			uint8_t Red	  = (X - YOffset);
-			*Pixel++	  = ((Red << 16) | (Green << 8) | Blue);
-		}
-		Row += Buffer.Pitch;
-	}
-}
 
 // function to create a bitmap memory if not initialized and to update the old one with new
 internal void Win32_ResizeDIBSection(Win32_OffScreenBuffer* Buffer, int width, int height)
@@ -345,9 +289,9 @@ LRESULT CALLBACK WindowProc(HWND handle, UINT Message, WPARAM wParam, LPARAM lPa
 	{
 	case WM_PAINT: // the "start painting" message
 	{
-		PAINTSTRUCT Paint;								// paint struct that gets set by windows to get useful data back
-		HDC DeviceContext = BeginPaint(handle, &Paint); // notifies the beginning of paint,Also returns a device
-														// context(takes a long pointer to PAINTSTRUCT)
+		PAINTSTRUCT Paint; // paint struct that gets set by windows to get useful data back
+		HDC			DeviceContext = BeginPaint(handle, &Paint); // notifies the beginning of paint,Also returns a device
+																// context(takes a long pointer to PAINTSTRUCT)
 		int				X		  = Paint.rcPaint.left;
 		int				Y		  = Paint.rcPaint.top;
 		int				Width	  = Paint.rcPaint.right - Paint.rcPaint.left;
@@ -528,7 +472,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 					// controller is unavailable
 				}
 			}
-			RenderWeirdGradient(BackBuffer, XOffset, YOffset);
+			GameUpdateAndRender(BackBuffer, XOffset, YOffset);
 
 			DWORD PlayCursor;
 			DWORD WriteCursor;
