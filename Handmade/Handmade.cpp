@@ -1,14 +1,14 @@
 #include "Handmade.h"
 #include <stdint.h>
 
-internal void RenderWeirdGradient(Win32_OffScreenBuffer Buffer, int XOffset, int YOffset)
+internal void RenderWeirdGradient(GameScreenBuffer* Buffer, int XOffset, int YOffset)
 {
 	// may need to clear this to black
-	uint8_t* Row = (uint8_t*)Buffer.PointBITMAPMemory;
-	for (int Y = 0; Y < Buffer.BitMapHeight; Y++)
+	uint8_t* Row = static_cast<uint8_t*>(Buffer->Memory);
+	for (int Y = 0; Y < Buffer->Height; Y++)
 	{
 		uint32_t* Pixel = (uint32_t*)Row;
-		for (int X = 0; X < Buffer.BitMapWidth; X++)
+		for (int X = 0; X < Buffer->Width; X++)
 		{
 			/*                 1  2  3  4    [ByteOrder]
 			 * Pixel in memory: 00 00 00 00
@@ -38,16 +38,16 @@ internal void RenderWeirdGradient(Win32_OffScreenBuffer Buffer, int XOffset, int
 			 * MEMORY  : BB GG RR XX
 			 * REGISTER: XX RR GG BB
 			 */
-			uint8_t Blue  = (X + XOffset);
-			uint8_t Green = (Y + YOffset);
-			uint8_t Red	  = (X - YOffset);
+			const uint8_t Blue  = (X + XOffset);
+			const uint8_t Green = (Y + YOffset);
+			const uint8_t Red	  = (X - YOffset);
 			*Pixel++	  = ((Red << 16) | (Green << 8) | Blue);
 		}
-		Row += Buffer.Pitch;
+		Row = Row + (Buffer->Width * Buffer->BytesPerPixel);
 	}
 }
 
-void GameUpdateAndRender(Win32_OffScreenBuffer Buffer, int XOffset, int YOffset)
+void GameUpdateAndRender(GameScreenBuffer* Buffer, int XOffset, int YOffset)
 {
 	RenderWeirdGradient(Buffer,XOffset,YOffset);
 }

@@ -38,6 +38,16 @@ struct WindowDimension
 	int Height;
 };
 
+struct Win32_OffScreenBuffer
+{
+	void*	   PointBITMAPMemory;
+	BITMAPINFO BitMapInfo;
+	int		   BitMapWidth;
+	int		   BitMapHeight;
+	int		   BytePerPixel;
+	int		   Pitch;
+};
+global_persist struct Win32_OffScreenBuffer BackBuffer;
 
 /*********************************************************************************************************/
 /*********************************************************************************************************/
@@ -224,7 +234,6 @@ internal WindowDimension Win32GetWindowDimension(HWND handle)
 	Result.Width  = ClientRECT.right - ClientRECT.left;
 	return Result;
 }
-
 
 // function to create a bitmap memory if not initialized and to update the old one with new
 internal void Win32_ResizeDIBSection(Win32_OffScreenBuffer* Buffer, int width, int height)
@@ -472,7 +481,13 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWSTR cmdline, i
 					// controller is unavailable
 				}
 			}
-			GameUpdateAndRender(BackBuffer, XOffset, YOffset);
+			GameScreenBuffer Buffer{};
+			Buffer.Memory		 = BackBuffer.PointBITMAPMemory;
+			Buffer.BytesPerPixel = BackBuffer.BytePerPixel;
+			Buffer.Height		 = BackBuffer.BitMapHeight;
+			Buffer.Width		 = BackBuffer.BitMapWidth;
+
+			GameUpdateAndRender(&Buffer, XOffset, YOffset);
 
 			DWORD PlayCursor;
 			DWORD WriteCursor;

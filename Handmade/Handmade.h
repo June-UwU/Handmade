@@ -2,16 +2,12 @@
 #include "Defines.h"
 #include <Dsound.h>
 
-
-struct Win32_OffScreenBuffer
+struct  GameScreenBuffer
 {
-	void*	   PointBITMAPMemory;
-	BITMAPINFO BitMapInfo;
-	int		   BitMapWidth;
-	int		   BitMapHeight;
-	int		   BytePerPixel;
-	int		   Pitch;
+	void* Memory;
+	int BytesPerPixel;
+	int Height;
+	int Width;
 };
-global_persist struct Win32_OffScreenBuffer BackBuffer;
 
-void GameUpdateAndRender(Win32_OffScreenBuffer Buffer, int XOffset, int YOffset);
+void GameUpdateAndRender(GameScreenBuffer* Buffer, int XOffset, int YOffset);
